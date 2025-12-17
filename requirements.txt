@@ -1,0 +1,5 @@
+escl-scanner
+zeroconf
+Pillow
+fastapi
+uvicorn
