@@ -9,7 +9,7 @@ import win32com.client
 from fpdf import FPDF
 from PIL import Image
 
-BASE_DIR = "scanners_genericos"
+BASE_DIR = "scanners_SyScan"
 
 
 # ================= WIA =================
