@@ -159,6 +159,8 @@ class ScannerApp(ctk.CTk):
         self.update_status("PDF gerado com sucesso!", "#2ecc71")
         messagebox.showinfo("ADAR - SyScan", f"PDF criado com {len(imgs)} páginas.")
         os.startfile(out)
+        self.after(1000, self.destroy)
+
 
 if __name__ == "__main__":
     ScannerApp().mainloop()
