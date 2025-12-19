@@ -34,7 +34,7 @@ class ScannerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("ADAR - SyScaner")
-        self.geometry("600x350")
+        self.geometry("600x520")
         self.devices = {}
         
         # Caminhos e Recursos
@@ -75,7 +75,7 @@ class ScannerApp(ctk.CTk):
         # Botões usando um padrão comum
         btn_args = {"master": self.container, "fg_color": "#161718", "hover_color": "#555658"}
         
-
+        ctk.CTkButton(**btn_args, text="Buscar Scanner", command=self.carregar).pack(pady=10)
         ctk.CTkButton(**btn_args, text="INICIAR DIGITALIZAÇÃO", height=50, width=280, 
                       font=("Roboto", 16, "bold"), command=self.iniciar).pack(pady=30)
 
@@ -117,11 +117,7 @@ class ScannerApp(ctk.CTk):
             return self.finalizar_pdf()
 
         try:
-            
-            self.update_status(f"AGUARDE: Digitalizando página {self.contador}...", "#3498db")
-            
-            self.update_idletasks() 
-            
+            self.update_status(f"Processando página {self.contador}...", "#3498db")
             scan_to_file(self.devices[self.combo.get()], self.pasta_temp, self.contador)
             self.contador += 1
             
