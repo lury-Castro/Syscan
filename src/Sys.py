@@ -6,7 +6,7 @@ from tkinter import messagebox
 from fpdf import FPDF
 from PIL import Image
 
-# --- Configurações de Caminhos Silenciosos ---
+# --- Configurações de Caminhos ---
 C_PATH = r"C:\SyScan_Backup"
 USER_PICTURES = str(pathlib.Path.home() / "Pictures" / "SyScan_Digitalizacoes")
 
@@ -31,14 +31,17 @@ def scan_to_file(device_id, pasta_temp, indice):
         info = next(d for d in wia.DeviceInfos if d.DeviceID == device_id)
         dev = info.Connect()
         item = dev.Items[0]
+        
         for prop in ["Horizontal Resolution", "Vertical Resolution"]:
             try: item.Properties(prop).Value = 300
             except: pass
+            
         image = item.Transfer("{B96B3CAB-0728-11D3-9D7B-0000F81EF32E}")
-        # Uso de UUID para evitar conflitos de nomes de arquivos
         caminho = os.path.join(pasta_temp, f"pg_{indice:03d}_{uuid.uuid4().hex[:4]}.png")
         Image.open(io.BytesIO(image.FileData.BinaryData)).save(caminho, "PNG")
         return caminho
+    except Exception as e:
+        raise Exception(f"O scanner não respondeu ou foi desconectado.\nErro: {e}")
     finally: pythoncom.CoUninitialize()
 
 class ScannerApp(ctk.CTk):
@@ -51,22 +54,38 @@ class ScannerApp(ctk.CTk):
         self.paginas_scaneadas = []
         self.path_root = os.path.dirname(os.path.abspath(__file__))
         
-        # IMPORTANTE: Primeiro criamos a UI, depois carregamos os ícones
+        # Ordem de inicialização importante para os ícones
         self._setup_ui()
-        self._load_icons()
+        self._load_icons() # Carrega os ícones logo após criar a UI
         
         self.after(500, self.carregar)
 
+    def _load_icons(self):
+        """Carrega o ícone da janela (.ico) e a logo (.png)"""
+        icon_path = os.path.join(self.path_root, "logo.ico")
+        img_path = os.path.join(self.path_root, "adar.png")
+        
+        # Ícone da Barra de Título
+        if os.path.exists(icon_path):
+            try:
+                self.after(200, lambda: self.iconbitmap(icon_path))
+            except: pass
+            
+        # Logo no Painel Lateral
+        if os.path.exists(img_path):
+            try:
+                img = ctk.CTkImage(Image.open(img_path), size=(200, 50))
+                self.logo_label.configure(image=img, text="")
+            except: pass
+
     def _setup_ui(self):
-        """Constrói os elementos da tela."""
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # Painel Esquerdo (Controles)
+        # Painel Esquerdo
         self.left_pannel = ctk.CTkFrame(self, width=320, corner_radius=0)
         self.left_pannel.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-        # Agora o logo_label existe antes de ser usado
         self.logo_label = ctk.CTkLabel(self.left_pannel, text="ADAR SYSCANER", font=("Roboto", 22, "bold"))
         self.logo_label.pack(pady=20)
         
@@ -95,34 +114,22 @@ class ScannerApp(ctk.CTk):
         self.status = ctk.CTkLabel(self.left_pannel, text="Iniciando...", font=("Roboto", 12))
         self.status.pack(side="bottom", pady=15)
 
-        # Painel Direito (Preview)
-        self.preview_pannel = ctk.CTkFrame(self, corner_radius=15, fg_color="#ebebeb")
+        # Painel Direito (Preview com BARRA DE ROLAGEM)
+        self.preview_pannel = ctk.CTkScrollableFrame(self, corner_radius=15, fg_color="#ebebeb")
         self.preview_pannel.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         
-        self.preview_label = ctk.CTkLabel(self.preview_pannel, text="O preview aparecerá aqui")
+        self.preview_label = ctk.CTkLabel(self.preview_pannel, text="")
         self.preview_label.pack(expand=True, fill="both", padx=15, pady=15)
-
-    def _load_icons(self):
-        """Tenta carregar a imagem da logo após a UI estar pronta."""
-        img_path = os.path.join(self.path_root, "adar.png")
-        if os.path.exists(img_path):
-            try:
-                img = ctk.CTkImage(Image.open(img_path), size=(200, 50))
-                self.logo_label.configure(image=img, text="")
-            except Exception as e:
-                print(f"Erro ao carregar imagem: {e}")
 
     def carregar(self):
         def busca():
             self.devices_ids = get_wia_devices()
             nomes = list(self.devices_ids.keys())
             if nomes:
-                self.after(0, lambda: [self.combo.configure(values=nomes), 
-                                       self.combo.set(nomes[0]), 
+                self.after(0, lambda: [self.combo.configure(values=nomes), self.combo.set(nomes[0]), 
                                        self.status.configure(text="Scanner Pronto")])
             else:
                 self.after(0, lambda: self.status.configure(text="Nenhum scanner detectado"))
-        
         threading.Thread(target=busca, daemon=True).start()
 
     def fluxo_digitalizacao(self):
@@ -130,7 +137,7 @@ class ScannerApp(ctk.CTk):
             return messagebox.showwarning("Aviso", "Selecione um scanner primeiro!")
             
         self.btn_iniciar.configure(state="disabled")
-        self.status.configure(text="Escaneando... aguarde.")
+        self.status.configure(text="Tentando comunicação...")
         
         dev_id = self.devices_ids[self.combo.get()]
         threading.Thread(target=self.executar_captura, args=(dev_id, len(self.paginas_scaneadas)+1), daemon=True).start()
@@ -141,16 +148,20 @@ class ScannerApp(ctk.CTk):
             self.paginas_scaneadas.append(caminho)
             self.after(10, lambda: self.mostrar_preview(caminho))
         except Exception as e:
-            err = str(e)
-            self.after(10, lambda m=err: [messagebox.showerror("Erro Hardware", m), self.reset_ui()])
+            # AVISO DE ERRO SE O SCANNER NÃO RESPONDER
+            self.after(10, lambda m=str(e): [messagebox.showerror("Erro de Hardware", m), self.reset_ui()])
 
     def mostrar_preview(self, caminho):
         img = Image.open(caminho)
-        img.thumbnail((500, 600))
-        ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
+        # Redimensiona mantendo a proporção para o scroll frame
+        w, h = img.size
+        ratio = 500 / w
+        img_resized = img.resize((500, int(h * ratio)))
         
+        ctk_img = ctk.CTkImage(light_image=img_resized, dark_image=img_resized, size=img_resized.size)
         self.preview_label.configure(image=ctk_img, text="")
         self.status.configure(text=f"Total: {len(self.paginas_scaneadas)} página(s)")
+        
         self.btn_iniciar.configure(state="normal")
         self.btn_finalizar.configure(state="normal")
         self.btn_remove.configure(state="normal")
@@ -167,6 +178,9 @@ class ScannerApp(ctk.CTk):
                 self.btn_finalizar.configure(state="disabled")
                 self.btn_remove.configure(state="disabled")
             self.status.configure(text=f"Total: {len(self.paginas_scaneadas)} página(s)")
+        
+        # Garante que o botão volte a funcionar após excluir
+        self.btn_iniciar.configure(state="normal")
 
     def finalizar_pdf(self):
         self.status.configure(text="Criando PDF...")
@@ -198,8 +212,7 @@ class ScannerApp(ctk.CTk):
             
             self.after(0, lambda: self.sucesso_final(path_final))
         except Exception as e:
-            err = str(e)
-            self.after(0, lambda m=err: messagebox.showerror("Erro PDF", m))
+            self.after(0, lambda: [messagebox.showerror("Erro PDF", str(e)), self.reset_ui()])
 
     def sucesso_final(self, caminho):
         os.startfile(caminho)
