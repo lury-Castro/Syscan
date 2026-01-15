@@ -41,7 +41,7 @@ def scan_to_file(device_id, pasta_temp, indice):
         Image.open(io.BytesIO(image.FileData.BinaryData)).save(caminho, "PNG")
         return caminho
     except Exception as e:
-        raise Exception(f"O scanner não respondeu ou foi desconectado.\nErro: {e}")
+        raise Exception(f"O scanner não respondeu.\nErro: {e}")
     finally: pythoncom.CoUninitialize()
 
 class ScannerApp(ctk.CTk):
@@ -52,26 +52,19 @@ class ScannerApp(ctk.CTk):
         
         self.devices_ids = {}
         self.paginas_scaneadas = []
+        self.preview_images_refs = [] # Guardar referências das imagens aqui
         self.path_root = os.path.dirname(os.path.abspath(__file__))
         
-        # Ordem de inicialização importante para os ícones
         self._setup_ui()
-        self._load_icons() # Carrega os ícones logo após criar a UI
-        
+        self._load_icons()
         self.after(500, self.carregar)
 
     def _load_icons(self):
-        """Carrega o ícone da janela (.ico) e a logo (.png)"""
         icon_path = os.path.join(self.path_root, "logo.ico")
         img_path = os.path.join(self.path_root, "adar.png")
-        
-        # Ícone da Barra de Título
         if os.path.exists(icon_path):
-            try:
-                self.after(200, lambda: self.iconbitmap(icon_path))
+            try: self.after(200, lambda: self.iconbitmap(icon_path))
             except: pass
-            
-        # Logo no Painel Lateral
         if os.path.exists(img_path):
             try:
                 img = ctk.CTkImage(Image.open(img_path), size=(200, 50))
@@ -101,25 +94,25 @@ class ScannerApp(ctk.CTk):
                                         fg_color="#27ae60", hover_color="#219150")
         self.btn_iniciar.pack(pady=25)
 
-        self.btn_remove = ctk.CTkButton(self.left_pannel, text="EXCLUIR PAGINA", height=60, width=280, 
+        self.btn_remove = ctk.CTkButton(self.left_pannel, text="EXCLUIR ÚLTIMA", height=60, width=280, 
                                         font=("Roboto", 16, "bold"), fg_color="#e67e22", 
-                                       state="disabled", command=self.remover_ultima)
+                                        state="disabled", command=self.remover_ultima)
         self.btn_remove.pack(pady=5)
 
         self.btn_finalizar = ctk.CTkButton(self.left_pannel, text="FINALIZAR", height=60, width=280, 
-                                        font=("Roboto", 16, "bold"),
+                                          font=("Roboto", 16, "bold"),
                                           command=self.finalizar_pdf, fg_color="#2980b9", state="disabled")
         self.btn_finalizar.pack(pady=20)
 
         self.status = ctk.CTkLabel(self.left_pannel, text="Iniciando...", font=("Roboto", 12))
         self.status.pack(side="bottom", pady=15)
 
-        # Painel Direito (Preview com BARRA DE ROLAGEM)
+        # Painel Direito
         self.preview_pannel = ctk.CTkScrollableFrame(self, corner_radius=15, fg_color="#ebebeb")
         self.preview_pannel.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
         
-        self.preview_label = ctk.CTkLabel(self.preview_pannel, text="O preview aparecerá aqui")
-        self.preview_label.pack(expand=True, fill="both", padx=15, pady=15)
+        self.msg_label = ctk.CTkLabel(self.preview_pannel, text="O preview aparecerá aqui")
+        self.msg_label.pack(pady=20)
 
     def carregar(self):
         def busca():
@@ -135,10 +128,8 @@ class ScannerApp(ctk.CTk):
     def fluxo_digitalizacao(self):
         if self.combo.get() in ["", "Buscando scanners...", "Nenhum scanner detectado"]: 
             return messagebox.showwarning("Aviso", "Selecione um scanner primeiro!")
-            
         self.btn_iniciar.configure(state="disabled")
-        self.status.configure(text="Tentando comunicação...")
-        
+        self.status.configure(text="Digitalizando...")
         dev_id = self.devices_ids[self.combo.get()]
         threading.Thread(target=self.executar_captura, args=(dev_id, len(self.paginas_scaneadas)+1), daemon=True).start()
 
@@ -146,41 +137,53 @@ class ScannerApp(ctk.CTk):
         try:
             caminho = scan_to_file(dev_id, tempfile.gettempdir(), indice)
             self.paginas_scaneadas.append(caminho)
-            self.after(10, lambda: self.mostrar_preview(caminho))
+            self.after(10, self.atualizar_preview_completo)
         except Exception as e:
-            # AVISO DE ERRO SE O SCANNER NÃO RESPONDER
-            self.after(10, lambda m=str(e): [messagebox.showerror("Erro de Hardware", m), self.reset_ui()])
+            self.after(10, lambda m=str(e): [messagebox.showerror("Erro", m), self.reset_ui()])
 
-    def mostrar_preview(self, caminho):
-        img = Image.open(caminho)
-        # Redimensiona mantendo a proporção para o scroll frame
-        w, h = img.size
-        ratio = 500 / w
-        img_resized = img.resize((500, int(h * ratio)))
-        
-        ctk_img = ctk.CTkImage(light_image=img_resized, dark_image=img_resized, size=img_resized.size)
-        self.preview_label.configure(image=ctk_img, text="")
+    def atualizar_preview_completo(self):
+        # 1. Limpar painel
+        for widget in self.preview_pannel.winfo_children():
+            widget.destroy()
+        self.preview_images_refs = []
+
+        if not self.paginas_scaneadas:
+            ctk.CTkLabel(self.preview_pannel, text="O preview aparecerá aqui").pack(pady=20)
+            self.btn_finalizar.configure(state="disabled")
+            self.btn_remove.configure(state="disabled")
+        else:
+            # 2. Reconstruir lista de imagens
+            for caminho in self.paginas_scaneadas:
+                try:
+                    img = Image.open(caminho)
+                    w, h = img.size
+                    ratio = 500 / w
+                    ctk_img = ctk.CTkImage(light_image=img, size=(500, int(h * ratio)))
+                    
+                    self.preview_images_refs.append(ctk_img) # Mantém a referência viva
+                    lbl = ctk.CTkLabel(self.preview_pannel, image=ctk_img, text="")
+                    lbl.pack(pady=10)
+                except: pass
+            
+            self.btn_finalizar.configure(state="normal")
+            self.btn_remove.configure(state="normal")
+
         self.status.configure(text=f"Total: {len(self.paginas_scaneadas)} página(s)")
-        
         self.btn_iniciar.configure(state="normal")
-        self.btn_finalizar.configure(state="normal")
-        self.btn_remove.configure(state="normal")
 
     def remover_ultima(self):
         if self.paginas_scaneadas:
-            img_path = self.paginas_scaneadas.pop()
-            if os.path.exists(img_path): os.remove(img_path)
+            caminho = self.paginas_scaneadas.pop()
+            # Limpa preview antes de deletar arquivo
+            for widget in self.preview_pannel.winfo_children():
+                widget.destroy()
+            self.update_idletasks()
             
-            if self.paginas_scaneadas:
-                self.mostrar_preview(self.paginas_scaneadas[-1])
-            else:
-                self.preview_label.configure(image=None, text="O preview aparecerá aqui")
-                self.btn_finalizar.configure(state="disabled")
-                self.btn_remove.configure(state="disabled")
-            self.status.configure(text=f"Total: {len(self.paginas_scaneadas)} página(s)")
-        
-        # Garante que o botão volte a funcionar após excluir
-        self.btn_iniciar.configure(state="normal")
+            try:
+                if os.path.exists(caminho): os.remove(caminho)
+            except: pass
+            
+            self.atualizar_preview_completo()
 
     def finalizar_pdf(self):
         self.status.configure(text="Criando PDF...")
@@ -203,7 +206,6 @@ class ScannerApp(ctk.CTk):
 
             nome_arq = f"digitalizado_{time.strftime('%H%M%S')}.pdf"
             path_final = os.path.join(USER_PICTURES, nome_arq)
-            
             pdf.output(os.path.join(C_PATH, nome_arq))
             pdf.output(path_final)
             
@@ -217,10 +219,8 @@ class ScannerApp(ctk.CTk):
     def sucesso_final(self, caminho):
         os.startfile(caminho)
         self.paginas_scaneadas = []
-        self.preview_label.configure(image=None, text="Finalizado!")
-        self.btn_remove.configure(state="disabled")
-        self.status.configure(text="Pronto para novo scan")
-        self.btn_iniciar.configure(state="normal")
+        self.atualizar_preview_completo()
+        self.status.configure(text="PDF Criado com sucesso!")
 
     def reset_ui(self):
         self.btn_iniciar.configure(state="normal")
